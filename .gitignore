@@ -1,0 +1,15 @@
+*.opensdf
+*.user
+*.tmp
+*.suo
+*.ncb
+*.sdf
+*.pch
+.vs/
+Debug/
+Release/
+ipch/
+bin/
+obj/
+.svn/
+Key.snk
