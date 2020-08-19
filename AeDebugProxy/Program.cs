@@ -9,7 +9,9 @@ namespace ConsoleApp2
 {
     class Program
     {
+        static NtThread _thread;
         static NtProcess _process;
+        static IntPtr _waitHandle;
 
         static void Main(string[] args)
         {
@@ -20,50 +22,84 @@ namespace ConsoleApp2
                     textWriter.WriteLine(arg);
             }
 
-            IntPtr evnt = new IntPtr();
-            if (args[0] == "-p")
+            try
             {
-                _process = NtProcess.Open(int.Parse(args[1]), ProcessAccessRights.MaximumAllowed);
-                evnt = new IntPtr(long.Parse(args[3]));
-            }
-            else
-            {
-                var config = new NtProcessCreateConfig();
-                config.InitFlags |= ProcessCreateInitFlag.IFEOSkipDebugger;
-                config.ThreadFlags |= ThreadCreateFlags.Suspended;
-                var path = NtFileUtils.DosFileNameToNt(@"D:\Documents\Visual Studio 2019\Projects\ProxyDebugger\ProxyDebugger\ConsoleApp1\bin\Debug\netcoreapp3.1\ConsoleApp1.exe");
-                config.ConfigImagePath = path;
-                _process = NtProcess.Create(config).Process;
-            }
-
-            while (true)
-            {
-                bool beingDebugged;
-                if (_process.Wow64)
+                if (args[0] == "-p")
                 {
-                    PartialPeb32 peb = (PartialPeb32)_process.GetPeb();
-                    beingDebugged = peb.BeingDebugged == 1;
+                    _process = NtProcess.Open(int.Parse(args[1]), ProcessAccessRights.MaximumAllowed);
+                    _waitHandle = new IntPtr(long.Parse(args[3]));
                 }
                 else
                 {
-                    PartialPeb peb = (PartialPeb)_process.GetPeb();
-                    beingDebugged = peb.BeingDebugged == 1;
+                    var config = new NtProcessCreateConfig();
+                    config.InitFlags |= ProcessCreateInitFlag.IFEOSkipDebugger;
+                    config.ThreadFlags |= ThreadCreateFlags.Suspended;
+                    var path = NtFileUtils.DosFileNameToNt(args[0]);
+                    config.ConfigImagePath = path;
+                    var result = NtProcess.Create(config);
+                    _process = result.Process;
+                    _thread = result.Thread;
                 }
 
-                if (beingDebugged)
-                    break;
+                while (true)
+                {
+                    bool beingDebugged;
+                    if (_process.Wow64)
+                    {
+                        PartialPeb32 peb = (PartialPeb32)_process.GetPeb();
+                        beingDebugged = peb.BeingDebugged == 1;
+                    }
+                    else
+                    {
+                        PartialPeb peb = (PartialPeb)_process.GetPeb();
+                        beingDebugged = peb.BeingDebugged == 1;
+                    }
 
-                Thread.Sleep(100);
+                    if (beingDebugged)
+                        break;
+
+                    Thread.Sleep(100);
+                }
+
+                if (_thread != null)
+                    _thread.Resume();
+
+                if (_waitHandle != IntPtr.Zero)
+                    SetEvent(_waitHandle);
             }
-            bool success = SetEvent(evnt);
-            CloseHandle(evnt);
-            _process = null;
+            finally
+            {
+                cleanUp(false);
+            }
         }
 
         private static void AppDomain_ProcessExit(object sender, EventArgs e)
         {
+            cleanUp(true);
+        }
+
+        static void cleanUp(bool terminate)
+        {
+            if (_thread != null)
+            {
+                _thread.Close();
+                _thread = null;
+            }
+
             if (_process != null)
-                _process.Terminate(NtStatus.DBG_CONTROL_C);
+            {
+                if (terminate)
+                    _process.Terminate(NtStatus.DBG_CONTROL_C, false);
+                else
+                    _process.Close();
+                _process = null;
+            }
+
+            if (_waitHandle != IntPtr.Zero)
+            {
+                CloseHandle(_waitHandle);
+                _waitHandle = IntPtr.Zero;
+            }
         }
 
         [DllImport("Kernel32.dll", SetLastError = true)]
