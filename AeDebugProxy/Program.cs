@@ -21,7 +21,6 @@ namespace ConsoleApp2
             }
 
             IntPtr evnt = new IntPtr();
-
             if (args[0] == "-p")
             {
                 _process = NtProcess.Open(int.Parse(args[1]), ProcessAccessRights.MaximumAllowed);
@@ -37,21 +36,28 @@ namespace ConsoleApp2
                 _process = NtProcess.Create(config).Process;
             }
 
-            int currentRefCount = _process.HandleReferenceCount;
             while (true)
             {
-                CheckRemoteDebuggerPresent(_process.Handle, out bool debuggerPresent);
-                if (debuggerPresent)
-                    break;
+                bool beingDebugged;
+                if (_process.Wow64)
+                {
+                    PartialPeb32 peb = (PartialPeb32)_process.GetPeb();
+                    beingDebugged = peb.BeingDebugged == 1;
+                }
+                else
+                {
+                    PartialPeb peb = (PartialPeb)_process.GetPeb();
+                    beingDebugged = peb.BeingDebugged == 1;
+                }
 
-                // NOTE: Needed whe using Image File Execution Options
-                //if (_process.HandleReferenceCount != currentRefCount)
-                // break;
+                if (beingDebugged)
+                    break;
 
                 Thread.Sleep(100);
             }
-
             bool success = SetEvent(evnt);
+            CloseHandle(evnt);
+            _process = null;
         }
 
         private static void AppDomain_ProcessExit(object sender, EventArgs e)
@@ -59,13 +65,6 @@ namespace ConsoleApp2
             if (_process != null)
                 _process.Terminate(NtStatus.DBG_CONTROL_C);
         }
-
-        [DllImport("Kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool CheckRemoteDebuggerPresent(
-            SafeHandle hProcess,
-            [MarshalAs(UnmanagedType.Bool)] out bool pbDebuggerPresent
-        );
 
         [DllImport("Kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
